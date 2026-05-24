@@ -216,7 +216,7 @@
   <!-- 搜索框 -->
   <div class="search-box">
     <input type="text" class="search-input" id="searchInput"
-           placeholder="请输入A股代码或名称，如：600519、000001、贵州茅台..."
+           placeholder="输入A股(600519)/港股(00700)代码或名称..."
            autocomplete="off" />
     <button class="search-btn" id="searchBtn" onclick="doSearch()">查询估值</button>
       <button class="batch-btn" id="batchBtn" onclick="startBatch()">批量估值 Top 100</button>
@@ -362,6 +362,7 @@ async function doSearch() {
 
   try {
     const summary = await apiGet("valuation/summary", { code });
+    const curr = summary.currency || "¥";
     currentData = summary;
 
     if (summary.error) {
@@ -416,7 +417,7 @@ function renderDashboard(data) {
 
   document.getElementById("dashboard").innerHTML = `
     <div class="card">
-      <div class="card-label">当前股价</div>
+      <div class="card-label">{{currency}}<div class="card-label">{{currency}}当前股价</div>
       <div class="card-value">¥${price.toFixed(2)}</div>
     </div>
     <div class="card">
@@ -583,7 +584,7 @@ function renderGraham() {
         </div>
 
         <div style="margin-top:16px;">
-          <div class="param-row"><span class="param-label">当前股价</span><span class="param-value">¥${model.current_price}</span></div>
+          <div class="param-row"><span class="param-label">{{currency}}当前股价</span><span class="param-value">¥${model.current_price}</span></div>
           <div class="param-row"><span class="param-label">安全边际</span><span class="param-value">${model.margin_of_safety}%</span></div>
           <div class="param-row"><span class="param-label">评级</span><span class="param-value"><span class="rating-badge ${getRatingClass(model.rating)}">${model.rating}</span></span></div>
         </div>

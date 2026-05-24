@@ -57,18 +57,33 @@ def _get(url: str, **kwargs) -> requests.Response:
 # ============================================================
 
 def normalize_code(code: str) -> str:
-    """标准化股票代码为纯数字"""
+    """标准化股票代码，去掉前缀"""
     code = code.strip().upper()
-    for prefix in ("SH.", "SZ.", "BJ.", "SH", "SZ", "BJ"):
+    for prefix in ("SH.", "SZ.", "BJ.", "HK.", "SH", "SZ", "BJ", "HK"):
         if code.startswith(prefix):
             code = code[len(prefix):]
             break
+    # 港股代码通常是5位数字，补0到5位
+    if code.isdigit() and 1 <= len(code) <= 5:
+        code = code.zfill(5)
     return code
+
+
+def _is_hk_stock(code: str) -> bool:
+    """判断是否为港股"""
+    raw = code.strip().upper()
+    if raw.startswith("HK") or raw.startswith("HK."):
+        return True
+    code = normalize_code(code)
+    # 5位数字，以0开头（如00700）
+    return code.isdigit() and len(code) == 5 and code.startswith("0")
 
 
 def _get_market(code: str) -> str:
     """根据代码判断市场前缀"""
     code = normalize_code(code)
+    if _is_hk_stock(code):
+        return f"hk{code}"
     if code.startswith("6"):
         return f"sh{code}"
     elif code.startswith("0") or code.startswith("3"):
@@ -89,6 +104,7 @@ def get_realtime_quote(code: str) -> Dict[str, Any]:
     使用腾讯行情 API (qt.gtimg.cn)，curl 避免 Python HTTP 库超时问题
     """
     market_code = _get_market(code)
+    is_hk = _is_hk_stock(code)
     try:
         result = subprocess.run(
             ["curl", "-s", "--max-time", "5",
@@ -111,19 +127,37 @@ def get_realtime_quote(code: str) -> Dict[str, Any]:
         def _field(index: int, default=""):
             return parts[index] if len(parts) > index else default
 
-        return {
-            "name": _field(1),
-            "price": safe_float(_field(3)),
-            "change_pct": safe_float(_field(32)),
-            "volume": safe_float(_field(6)),
-            "amount": safe_float(_field(37)) * 10000,
-            "high": safe_float(_field(33)),
-            "low": safe_float(_field(34)),
-            "pe": safe_float(_field(39)),
-            "pb": safe_float(_field(46)),
-            "total_value": safe_float(_field(44)) * 1e8,
-            "circulating_value": safe_float(_field(45)) * 1e8,
-        }
+        # 港股字段索引与A股不同
+        if is_hk:
+            return {
+                "name": _field(1),
+                "price": safe_float(_field(3)),
+                "change_pct": safe_float(_field(32)),
+                "volume": safe_float(_field(36)),
+                "amount": safe_float(_field(37)),
+                "high": safe_float(_field(33)),
+                "low": safe_float(_field(34)),
+                "pe": safe_float(_field(39)),
+                "pb": safe_float(_field(43)),
+                "total_value": safe_float(_field(44)) * 1e8,
+                "circulating_value": safe_float(_field(45)) * 1e8,
+                "currency": "HKD",
+            }
+        else:
+            return {
+                "name": _field(1),
+                "price": safe_float(_field(3)),
+                "change_pct": safe_float(_field(32)),
+                "volume": safe_float(_field(6)),
+                "amount": safe_float(_field(37)) * 10000,
+                "high": safe_float(_field(33)),
+                "low": safe_float(_field(34)),
+                "pe": safe_float(_field(39)),
+                "pb": safe_float(_field(46)),
+                "total_value": safe_float(_field(44)) * 1e8,
+                "circulating_value": safe_float(_field(45)) * 1e8,
+                "currency": "CNY",
+            }
     except Exception as e:
         logger.warning(f"腾讯行情({code})失败: {e}")
         return {"price": None, "pe": None, "pb": None, "error": str(e)}
@@ -175,13 +209,22 @@ def search_stocks(keyword: str) -> List[dict]:
     except Exception as e:
         logger.warning(f"suggest搜索失败: {e}")
 
-    # 如果 suggest 无结果，尝试通过腾讯行情验证代码
-    if not results and keyword.isdigit() and len(keyword) == 6:
+    # 港股代码（5位，0开头）或纯6位A股代码：通过腾讯行情直接验证
+    if keyword.isdigit() and len(keyword) in (5, 6):
+        # 港股优先：5位0开头 → 跳过 suggest 的 A 股结果
+        is_hk = _is_hk_stock(keyword)
+        if is_hk:
+            results = []  # 港股不走 suggest
         try:
             market_code = _get_market(keyword)
-            resp = _get(f"https://qt.gtimg.cn/q={market_code}", timeout=10)
-            if resp.text and keyword in resp.text and "~" in resp.text:
-                parts = resp.text.split("~")
+            r = subprocess.run(
+                ["curl", "-s", "--max-time", "3",
+                 "http://qt.gtimg.cn/q=" + market_code],
+                capture_output=True, timeout=5,
+            )
+            text = r.stdout.decode("gbk", errors="ignore")
+            if keyword in text and "~" in text:
+                parts = text.split("~")
                 name = parts[1] if len(parts) > 1 else keyword
                 results.append({
                     "code": keyword,
@@ -227,26 +270,35 @@ def get_stock_info(code: str) -> Dict[str, Any]:
 
     info = {"code": code, "name": name, "full_name": name}
 
-    # 获取总股本 (新浪公司页面，curl 避免 Python HTTP 超时)
-    try:
-        result = subprocess.run(
-            ["curl", "-s", "--max-time", "8",
-             "-H", "User-Agent: Mozilla/5.0",
-             "-H", "Referer: https://finance.sina.com.cn",
-             f"http://finance.sina.com.cn/realstock/company/{market_code}/nc.shtml"],
-            capture_output=True, timeout=10,
-        )
-        text = result.stdout.decode("gbk", errors="ignore")
+    if _is_hk_stock(code):
+        # 港股：从 Tencent 行情反推总股本（总市值 / 股价）
+        total_value = quote.get("total_value", 0)
+        price = quote.get("price", 0)
+        if total_value > 0 and price > 0:
+            info["total_shares"] = (total_value / price) / 10000  # 转为万股
+        info.setdefault("total_shares", 0)
+        info.setdefault("circulating_shares", info["total_shares"])
+    else:
+        # A股：从新浪公司页面获取
+        try:
+            result = subprocess.run(
+                ["curl", "-s", "--max-time", "8",
+                 "-H", "User-Agent: Mozilla/5.0",
+                 "-H", "Referer: https://finance.sina.com.cn",
+                 f"http://finance.sina.com.cn/realstock/company/{market_code}/nc.shtml"],
+                capture_output=True, timeout=10,
+            )
+            text = result.stdout.decode("gbk", errors="ignore")
 
-        m = re.search(r"var\s+totalcapital\s*=\s*([\d.]+)", text)
-        if m:
-            info["total_shares"] = safe_float(m.group(1))
+            m = re.search(r"var\s+totalcapital\s*=\s*([\d.]+)", text)
+            if m:
+                info["total_shares"] = safe_float(m.group(1))
 
-        m = re.search(r"var\s+currcapital\s*=\s*([\d.]+)", text)
-        if m:
-            info["circulating_shares"] = safe_float(m.group(1))
-    except Exception as e:
-        logger.debug(f"获取{code}股本失败: {e}")
+            m = re.search(r"var\s+currcapital\s*=\s*([\d.]+)", text)
+            if m:
+                info["circulating_shares"] = safe_float(m.group(1))
+        except Exception as e:
+            logger.debug(f"获取{code}股本失败: {e}")
 
     info.setdefault("total_shares", 0)
     info.setdefault("circulating_shares", 0)
@@ -385,39 +437,22 @@ def get_financial_indicators(code: str) -> Dict[str, Any]:
     """获取关键财务指标"""
     code = normalize_code(code)
 
+    # 港股：从 Tencent 行情反推 EPS/BPS
+    if _is_hk_stock(code):
+        quote = get_realtime_quote(code)
+        price = quote.get("price", 0)
+        pe = quote.get("pe", 0)
+        pb = quote.get("pb", 0)
+        eps = price / pe if price > 0 and pe > 0 else 0
+        bps = price / pb if price > 0 and pb > 0 else 0
+        return {
+            "eps": eps, "bps": bps, "roe": 0, "roa": 0,
+            "gross_margin": 0, "net_margin": 0, "debt_ratio": 0,
+            "current_ratio": 0, "quick_ratio": 0,
+            "revenue_growth": 0, "profit_growth": 0, "total_asset_growth": 0,
+        }
+
     try:
-        resp = _get(
-            f"https://money.finance.sina.com.cn/corp/go.php/vFD_FinancialGuideLine/stockid/{code}/ctrl/2024/displaytype/4.phtml",
-            timeout=15,
-        )
-
-        text = resp.text
-
-        # 从新浪财务指标页提取数据
-        def _extract(pattern: str) -> float:
-            m = re.search(pattern, text)
-            if m:
-                return safe_float(m.group(1))
-            return 0.0
-
-        # 最新一期数据
-        eps = _extract(r"每股收益.*?>\s*([\d.-]+)")
-        bps = _extract(r"每股净资产.*?>\s*([\d.-]+)")
-        roe = _extract(r"净资产收益率.*?>\s*([\d.-]+)")
-        roa = _extract(r"总资产报酬率.*?>\s*([\d.-]+)")
-        gross_margin = _extract(r"销售毛利率.*?>\s*([\d.-]+)")
-        net_margin = _extract(r"销售净利率.*?>\s*([\d.-]+)")
-        debt_ratio = _extract(r"资产负债率.*?>\s*([\d.-]+)")
-        current_ratio = _extract(r"流动比率.*?>\s*([\d.-]+)")
-        quick_ratio = _extract(r"速动比率.*?>\s*([\d.-]+)")
-
-        # 增长率
-        revenue_growth = _extract(r"营业收入增长率.*?>\s*([\d.-]+)")
-        profit_growth = _extract(r"净利润增长率.*?>\s*([\d.-]+)")
-        total_asset_growth = _extract(r"总资产增长率.*?>\s*([\d.-]+)")
-
-        # 如果上面的正则没提取到，尝试用 HTML 解析
-        soup = BeautifulSoup(resp.text, "html.parser")
 
         def _td_value(label: str) -> float:
             for td in soup.find_all("td"):
