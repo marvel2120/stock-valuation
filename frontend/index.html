@@ -157,6 +157,47 @@
   .slider-group label { display: flex; justify-content: space-between; font-size: 13px; color: #666; margin-bottom: 4px; }
   .slider-group input[type="range"] { width: 100%; }
 
+  
+	  .batch-btn {
+	    padding: 12px 20px; background: #fff; color: #4a6cf7;
+	    border: 2px solid #4a6cf7; border-radius: 8px; font-size: 14px;
+	    cursor: pointer; font-weight: 600; white-space: nowrap;
+	  }
+	  .batch-btn:hover { background: #f0f3ff; }
+	  .batch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	  .modal-overlay {
+	    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+	    background: rgba(0,0,0,0.5); z-index: 1000;
+	    display: flex; align-items: center; justify-content: center;
+	  }
+	  .modal-box {
+	    background: #fff; border-radius: 16px; padding: 32px;
+	    width: 420px; max-width: 90%; text-align: center;
+	    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+	  }
+	  .modal-box h3 { margin-bottom: 12px; font-size: 17px; color: #333; }
+	  .progress-bar {
+	    width: 100%; height: 12px; background: #eee; border-radius: 6px;
+	    overflow: hidden; margin: 16px 0;
+	  }
+	  .progress-fill {
+	    height: 100%; background: #4a6cf7; border-radius: 6px;
+	    transition: width 0.3s; width: 0%;
+	  }
+	  .progress-text { font-size: 14px; color: #666; margin: 4px 0; }
+	  .current-stock { color: #888; font-size: 13px; margin: 4px 0; min-height: 18px; }
+	  .modal-actions { margin-top: 20px; display: flex; gap: 12px; justify-content: center; }
+	  .btn-secondary {
+	    padding: 10px 24px; background: #e8e8e8; color: #333;
+	    border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+	  }
+	  .btn-download {
+	    padding: 10px 24px; background: #2e7d32; color: #fff;
+	    border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
+	    text-decoration: none; display: inline-block;
+	  }
+
   .hidden { display: none; }
   @media (max-width: 768px) {
     .dashboard { grid-template-columns: 1fr; }
@@ -178,6 +219,7 @@
            placeholder="请输入A股代码或名称，如：600519、000001、贵州茅台..."
            autocomplete="off" />
     <button class="search-btn" id="searchBtn" onclick="doSearch()">查询估值</button>
+      <button class="batch-btn" id="batchBtn" onclick="startBatch()">批量估值 Top 100</button>
   </div>
   <div id="suggestions" class="suggestions hidden"></div>
 
@@ -197,6 +239,19 @@
 
   <!-- 关键财务数据 -->
   <div id="financialsContainer" class="hidden" style="margin-top:20px;"></div>
+  <!-- 批量估值弹窗 -->
+  <div class="modal-overlay hidden" id="batchModal">
+    <div class="modal-box">
+      <h3 id="batchTitle">批量估值进行中...</h3>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+      <div class="progress-text" id="progressText">0 / 0</div>
+      <div class="current-stock" id="currentStock"></div>
+      <div class="modal-actions">
+        <button class="btn-secondary hidden" id="btnClose" onclick="closeModal()">关闭</button>
+        <a class="btn-download hidden" id="btnDownload" onclick="downloadCSV()">下载 CSV</a>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -642,6 +697,82 @@ document.getElementById("searchInput").addEventListener("keydown", function(e) {
 document.addEventListener("click", function(e) {
   if (!e.target.closest(".search-box")) hideSuggestions();
 });
+
+// ==================== 批量估值 ====================
+let batchTimer = null;
+
+async function startBatch() {
+  const btn = document.getElementById("batchBtn");
+  btn.disabled = true;
+  btn.textContent = "启动中...";
+
+  try {
+    const res = await fetch("/api/batch/run?top_n=100", { method: "POST" });
+    const data = await res.json();
+    if (data.status === "already_running") {
+      btn.textContent = "批量估值 Top 100";
+      btn.disabled = false;
+      return;
+    }
+    document.getElementById("batchModal").classList.remove("hidden");
+    document.getElementById("batchTitle").textContent = "批量估值进行中...";
+    document.getElementById("progressFill").style.width = "0%";
+    document.getElementById("progressText").textContent = "0 / " + data.total;
+    document.getElementById("currentStock").textContent = "";
+    document.getElementById("btnClose").classList.add("hidden");
+    document.getElementById("btnDownload").classList.add("hidden");
+    batchTimer = setInterval(pollBatch, 2000);
+  } catch (e) {
+    btn.textContent = "批量估值 Top 100";
+    btn.disabled = false;
+  }
+}
+
+async function pollBatch() {
+  try {
+    const res = await fetch("/api/batch/status");
+    const data = await res.json();
+    const pct = data.total > 0 ? Math.round(data.done / data.total * 100) : 0;
+    document.getElementById("progressFill").style.width = pct + "%";
+    document.getElementById("progressText").textContent = data.done + " / " + data.total;
+    document.getElementById("currentStock").textContent = data.current || "";
+
+    if (data.status === "done") {
+      clearInterval(batchTimer);
+      document.getElementById("batchTitle").textContent = "估值完成!";
+      document.getElementById("btnClose").classList.remove("hidden");
+      document.getElementById("btnDownload").classList.remove("hidden");
+      document.getElementById("batchBtn").textContent = "批量估值 Top 100";
+      document.getElementById("batchBtn").disabled = false;
+    }
+  } catch (e) {
+    // retry next poll
+  }
+}
+
+function closeModal() {
+  document.getElementById("batchModal").classList.add("hidden");
+  if (batchTimer) { clearInterval(batchTimer); batchTimer = null; }
+  document.getElementById("batchBtn").disabled = false;
+  document.getElementById("batchBtn").textContent = "批量估值 Top 100";
+}
+
+async function downloadCSV() {
+  try {
+    const res = await fetch("/api/batch/download");
+    const data = await res.json();
+    if (data.csv) {
+      const blob = new Blob([data.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = data.filename || "batch_result.csv";
+      a.click(); URL.revokeObjectURL(url);
+    }
+  } catch (e) {
+    console.error("下载失败", e);
+  }
+}
+
 </script>
 </body>
 </html>

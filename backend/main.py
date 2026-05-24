@@ -9,7 +9,7 @@ import os
 import sys
 import time
 import traceback
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +46,7 @@ class ValuationAPIHandler(BaseHTTPRequestHandler):
         """处理 POST 请求"""
         parsed = urlparse(self.path)
         path = parsed.path
+        query = parsed.query
 
         if not path.startswith("/api/"):
             self._send_json(404, {"error": "Not Found"})
@@ -62,7 +63,7 @@ class ValuationAPIHandler(BaseHTTPRequestHandler):
                 pass
 
         try:
-            status, data = handle_api(path, "", body)
+            status, data = handle_api(path, query, body)
             self._send_json(status, data)
         except Exception as e:
             traceback.print_exc()
@@ -143,7 +144,7 @@ def main():
     host = SERVER_CONFIG["host"]
     port = SERVER_CONFIG["port"]
 
-    server = HTTPServer((host, port), ValuationAPIHandler)
+    server = ThreadingHTTPServer((host, port), ValuationAPIHandler)
     print(f"🚀 A股估值工具已启动: http://localhost:{port}")
     print(f"   API 端点: http://localhost:{port}/api/health")
     print(f"   Ctrl+C 停止服务")

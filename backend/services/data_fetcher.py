@@ -5,6 +5,7 @@
 
 import os
 import re
+import subprocess
 import time
 import logging
 from typing import Dict, Any, List
@@ -23,10 +24,11 @@ for _env in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROX
     os.environ.pop(_env, None)
     os.environ.pop(_env.upper(), None)
 
-# HTTP 会话
+# HTTP 会话 (Connection: close 避免持久连接超时)
 _session = requests.Session()
 _session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Connection": "close",
 })
 
 
@@ -84,23 +86,22 @@ def _get_market(code: str) -> str:
 def get_realtime_quote(code: str) -> Dict[str, Any]:
     """
     获取单只股票实时行情
-    使用腾讯行情 API (qt.gtimg.cn)，不依赖 push2.eastmoney.com
+    使用腾讯行情 API (qt.gtimg.cn)，curl 避免 Python HTTP 库超时问题
     """
     market_code = _get_market(code)
     try:
-        resp = _get(f"https://qt.gtimg.cn/q={market_code}", timeout=10)
-        text = resp.text
+        result = subprocess.run(
+            ["curl", "-s", "--max-time", "5",
+             "-H", "User-Agent: Mozilla/5.0",
+             f"http://qt.gtimg.cn/q={market_code}"],
+            capture_output=True, timeout=8,
+        )
+        text = result.stdout.decode("gbk", errors="ignore")
 
         if not text or "none" in text.lower():
             return {"price": None, "pe": None, "pb": None, "error": "未找到该股票"}
 
         # 腾讯行情格式: v_sh600519="1~name~code~price~..."
-        # 字段索引:
-        #   [1] name, [3] price, [4] yesterday_close, [5] open,
-        #   [6] volume(手), [31] change, [32] change_pct,
-        #   [33] high, [34] low, [36] volume, [37] amount(万),
-        #   [39] PE_TTM, [44] total_market_cap(亿),
-        #   [45] circulating_market_cap(亿), [46] PB
         match = re.search(r'"(.+)"', text)
         if not match:
             return {"price": None, "error": "解析腾讯行情失败"}
@@ -115,12 +116,12 @@ def get_realtime_quote(code: str) -> Dict[str, Any]:
             "price": safe_float(_field(3)),
             "change_pct": safe_float(_field(32)),
             "volume": safe_float(_field(6)),
-            "amount": safe_float(_field(37)) * 10000,  # 转换为元
+            "amount": safe_float(_field(37)) * 10000,
             "high": safe_float(_field(33)),
             "low": safe_float(_field(34)),
             "pe": safe_float(_field(39)),
             "pb": safe_float(_field(46)),
-            "total_value": safe_float(_field(44)) * 1e8,  # 亿转元
+            "total_value": safe_float(_field(44)) * 1e8,
             "circulating_value": safe_float(_field(45)) * 1e8,
         }
     except Exception as e:
@@ -141,14 +142,15 @@ def search_stocks(keyword: str) -> List[dict]:
     results = []
 
     try:
-        # 新浪 suggest API 进行模糊搜索
-        resp = _get(
-            "https://suggest3.sinajs.cn/suggest/",
-            params={"type": "11,12,13,14,15", "key": keyword},
-            headers={"Referer": "https://finance.sina.com.cn"},
-            timeout=10,
+        # 新浪 suggest API (curl 避免 Python HTTP 超时)
+        result = subprocess.run(
+            ["curl", "-s", "--max-time", "5",
+             "-H", "User-Agent: Mozilla/5.0",
+             "-H", "Referer: https://finance.sina.com.cn",
+             f"http://suggest3.sinajs.cn/suggest/?type=11,12,13,14,15&key={keyword}"],
+            capture_output=True, timeout=8,
         )
-        text = resp.text
+        text = result.stdout.decode("gbk", errors="ignore")
 
         # 格式: var suggestvalue="sh600519,11,600519,sh600519,贵州茅台,...;...";
         # 先提取外层引号中的完整内容
@@ -225,17 +227,17 @@ def get_stock_info(code: str) -> Dict[str, Any]:
 
     info = {"code": code, "name": name, "full_name": name}
 
-    # 获取总股本 (新浪公司页面的 JS 变量)
+    # 获取总股本 (新浪公司页面，curl 避免 Python HTTP 超时)
     try:
-        market = "sh" if code.startswith("6") else "sz"
-        resp = _get(
-            f"https://finance.sina.com.cn/realstock/company/{market_code}/nc.shtml",
-            headers={"Referer": "https://finance.sina.com.cn"},
-            timeout=10,
+        result = subprocess.run(
+            ["curl", "-s", "--max-time", "8",
+             "-H", "User-Agent: Mozilla/5.0",
+             "-H", "Referer: https://finance.sina.com.cn",
+             f"http://finance.sina.com.cn/realstock/company/{market_code}/nc.shtml"],
+            capture_output=True, timeout=10,
         )
-        text = resp.text
+        text = result.stdout.decode("gbk", errors="ignore")
 
-        # var totalcapital = 125227.021500; //总股本（万股）
         m = re.search(r"var\s+totalcapital\s*=\s*([\d.]+)", text)
         if m:
             info["total_shares"] = safe_float(m.group(1))
