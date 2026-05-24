@@ -535,6 +535,50 @@ def get_price_history(code: str, period: str = "monthly") -> pd.DataFrame:
 
 
 # ============================================================
+# 成交量排名 (新浪 Market Center API)
+# ============================================================
+
+@cached(ttl=120)
+def get_top_stocks_by_volume(top_n: int = 200) -> List[dict]:
+    """
+    获取成交量前 N 只 A 股
+    返回 [{code, name, price, pe, pb, volume}]
+    """
+    url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+    page_size = 100
+    pages_needed = (top_n + page_size - 1) // page_size
+    all_stocks = []
+
+    for page in range(1, pages_needed + 1):
+        try:
+            resp = _get(url, params={
+                "page": page,
+                "num": page_size,
+                "sort": "volume",
+                "asc": "0",
+                "node": "hs_a",
+            }, timeout=15)
+            data = resp.json(strict=False)
+            if not data:
+                break
+            for s in data:
+                all_stocks.append({
+                    "code": str(s.get("code", "")),
+                    "name": str(s.get("name", "")),
+                    "price": safe_float(s.get("trade", 0)),
+                    "pe": safe_float(s.get("per", 0)),
+                    "pb": safe_float(s.get("pb", 0)),
+                    "volume": safe_float(s.get("volume", 0)),
+                })
+            if page < pages_needed:
+                time.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"获取成交量排名第{page}页失败: {e}")
+
+    return all_stocks[:top_n]
+
+
+# ============================================================
 # 综合数据获取
 # ============================================================
 
