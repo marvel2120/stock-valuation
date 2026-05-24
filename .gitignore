@@ -12,3 +12,4 @@ venv/
 .env
 *.log
 .claude/
+batch_result.csv
