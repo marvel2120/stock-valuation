@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股估值分析工具</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f0f2f5; color: #333; line-height: 1.6;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+
+  /* Header */
+  .header { text-align: center; padding: 30px 0 20px; }
+  .header h1 { font-size: 28px; color: #1a1a2e; margin-bottom: 6px; }
+  .header p { color: #888; font-size: 14px; }
+
+  /* Search */
+  .search-box {
+    background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    display: flex; gap: 12px; align-items: center;
+  }
+  .search-input {
+    flex: 1; padding: 12px 16px; border: 2px solid #e8e8e8;
+    border-radius: 8px; font-size: 16px; outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-input:focus { border-color: #4a6cf7; }
+  .search-btn {
+    padding: 12px 32px; background: #4a6cf7; color: #fff;
+    border: none; border-radius: 8px; font-size: 16px; cursor: pointer;
+    font-weight: 600; transition: background 0.2s;
+  }
+  .search-btn:hover { background: #3651d5; }
+  .search-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+  /* Suggestions */
+  .suggestions {
+    position: absolute; background: #fff; border: 1px solid #e8e8e8;
+    border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    max-height: 300px; overflow-y: auto; z-index: 100;
+  }
+  .suggestion-item {
+    padding: 10px 16px; cursor: pointer; display: flex;
+    justify-content: space-between; gap: 20px;
+  }
+  .suggestion-item:hover { background: #f5f7ff; }
+  .suggestion-item .code { font-weight: 600; color: #4a6cf7; }
+  .suggestion-item .name { font-weight: 500; }
+  .suggestion-item .pe { color: #888; font-size: 13px; }
+
+  /* Dashboard Cards */
+  .dashboard {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 16px; margin-bottom: 20px;
+  }
+  .card {
+    background: #fff; border-radius: 12px; padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06); text-align: center;
+  }
+  .card-label { font-size: 13px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card-value { font-size: 32px; font-weight: 700; color: #1a1a2e; }
+  .card-sub { font-size: 14px; color: #666; margin-top: 4px; }
+
+  .card.green .card-value { color: #2e7d32; }
+  .card.red .card-value { color: #c62828; }
+  .card.orange .card-value { color: #e65100; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 0; }
+  .tab {
+    padding: 10px 20px; background: #e8e8e8; border: none;
+    border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px;
+    font-weight: 500; color: #666; transition: all 0.2s;
+  }
+  .tab.active { background: #fff; color: #4a6cf7; font-weight: 600; }
+  .tab:hover:not(.active) { background: #ddd; }
+
+  .tab-content {
+    background: #fff; border-radius: 0 8px 8px 8px;
+    padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+
+  /* Model Panel */
+  .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .model-section { }
+  .model-section h3 {
+    font-size: 14px; color: #888; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 8px;
+    border-bottom: 1px solid #eee;
+  }
+  .param-row {
+    display: flex; justify-content: space-between; padding: 8px 0;
+    border-bottom: 1px solid #f5f5f5;
+  }
+  .param-label { color: #666; }
+  .param-value { font-weight: 600; }
+
+  /* Result highlight */
+  .result-box {
+    margin-top: 16px; padding: 16px; border-radius: 8px;
+    background: #f5f7ff; border: 1px solid #e0e4ff;
+  }
+  .result-box .big-number { font-size: 24px; font-weight: 700; color: #4a6cf7; }
+  .result-box .label { font-size: 12px; color: #888; }
+
+  /* Projected FCF table */
+  .fcf-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  .fcf-table th, .fcf-table td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #eee; }
+  .fcf-table th { background: #fafafa; color: #666; font-weight: 500; text-align: center; }
+  .fcf-table td:first-child, .fcf-table th:first-child { text-align: center; }
+
+  /* Error */
+  .error-box {
+    padding: 16px; border-radius: 8px; background: #fff3f3;
+    border: 1px solid #ffe0e0; color: #c62828; margin-top: 12px;
+  }
+
+  /* Loading */
+  .loading { text-align: center; padding: 40px; color: #888; }
+  .spinner {
+    display: inline-block; width: 40px; height: 40px;
+    border: 4px solid #e8e8e8; border-top-color: #4a6cf7;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Financial indicators grid */
+  .indicator-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin-top: 12px;
+  }
+  .indicator-item {
+    padding: 12px; background: #fafafa; border-radius: 8px;
+    text-align: center;
+  }
+  .indicator-item .ind-val { font-size: 18px; font-weight: 700; }
+  .indicator-item .ind-label { font-size: 12px; color: #888; margin-top: 2px; }
+
+  /* Rating badge */
+  .rating-badge {
+    display: inline-block; padding: 4px 12px; border-radius: 20px;
+    font-size: 13px; font-weight: 600;
+  }
+  .rating-strong-undervalued { background: #e8f5e9; color: #2e7d32; }
+  .rating-undervalued { background: #f1f8e9; color: #558b2f; }
+  .rating-fair { background: #fff8e1; color: #f57f17; }
+  .rating-overvalued { background: #fce4ec; color: #c62828; }
+  .rating-strong-overvalued { background: #ffebee; color: #b71c1c; }
+
+  /* Slider */
+  .slider-group { margin: 10px 0; }
+  .slider-group label { display: flex; justify-content: space-between; font-size: 13px; color: #666; margin-bottom: 4px; }
+  .slider-group input[type="range"] { width: 100%; }
+
+  .hidden { display: none; }
+  @media (max-width: 768px) {
+    .dashboard { grid-template-columns: 1fr; }
+    .model-grid { grid-template-columns: 1fr; }
+    .indicator-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>📊 A股估值分析工具</h1>
+    <p>基于 DCF / PE-PB / Graham / PEG-ROE 多维估值模型</p>
+  </div>
+
+  <!-- 搜索框 -->
+  <div class="search-box">
+    <input type="text" class="search-input" id="searchInput"
+           placeholder="请输入A股代码或名称，如：600519、000001、贵州茅台..."
+           autocomplete="off" />
+    <button class="search-btn" id="searchBtn" onclick="doSearch()">查询估值</button>
+  </div>
+  <div id="suggestions" class="suggestions hidden"></div>
+
+  <!-- 仪表盘 -->
+  <div id="dashboard" class="hidden"></div>
+
+  <!-- 估值模型 Tabs -->
+  <div id="tabsContainer" class="hidden">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('dcf')">DCF 现金流折现</button>
+      <button class="tab" onclick="switchTab('pepb')">PE/PB 相对估值</button>
+      <button class="tab" onclick="switchTab('graham')">Graham Number</button>
+      <button class="tab" onclick="switchTab('pegroe')">PEG/ROE 估值</button>
+    </div>
+    <div class="tab-content" id="tabContent"></div>
+  </div>
+
+  <!-- 关键财务数据 -->
+  <div id="financialsContainer" class="hidden" style="margin-top:20px;"></div>
+</div>
+
+<script>
+// ==================== 全局状态 ====================
+let currentCode = "";
+let currentData = null;
+let currentTab = "dcf";
+
+// ==================== API 调用 ====================
+async function apiGet(endpoint, params = {}, timeoutMs = 15000) {
+  const query = new URLSearchParams(params).toString();
+  const url = `/api/${endpoint}?${query}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'Failed to fetch') {
+      throw new Error('无法连接服务器，请确保已运行: cd backend && python3 main.py');
+    }
+    throw e;
+  }
+}
+
+async function apiPost(endpoint, body = {}) {
+  try {
+    const res = await fetch(`/api/${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  } catch (e) {
+    if (e.message === 'Failed to fetch') {
+      throw new Error('无法连接服务器，请确保已运行: python3 backend/main.py');
+    }
+    throw e;
+  }
+}
+
+// ==================== 搜索 ====================
+let searchTimeout = null;
+document.getElementById("searchInput").addEventListener("input", function() {
+  clearTimeout(searchTimeout);
+  const kw = this.value.trim();
+  if (kw.length < 1) {
+    hideSuggestions();
+    return;
+  }
+  searchTimeout = setTimeout(() => doSearchSuggest(kw), 300);
+});
+
+async function doSearchSuggest(keyword) {
+  const data = await apiGet("stock/search", { keyword });
+  if (data.results && data.results.length > 0) {
+    showSuggestions(data.results);
+  } else {
+    hideSuggestions();
+  }
+}
+
+function showSuggestions(items) {
+  const el = document.getElementById("suggestions");
+  el.innerHTML = items.map((item, i) => `
+    <div class="suggestion-item" onclick="selectStock('${item.code}', '${item.name}')">
+      <span><span class="code">${item.code}</span> <span class="name">${item.name}</span></span>
+      <span class="pe">PE:${item.pe || "-"}</span>
+    </div>
+  `).join("");
+  el.classList.remove("hidden");
+}
+
+function hideSuggestions() {
+  document.getElementById("suggestions").classList.add("hidden");
+}
+
+function selectStock(code, name) {
+  document.getElementById("searchInput").value = `${code} ${name}`;
+  hideSuggestions();
+  doSearch();
+}
+
+async function doSearch() {
+  const input = document.getElementById("searchInput").value.trim();
+  if (!input) return;
+
+  const code = input.split(/\s+/)[0];
+  currentCode = code;
+  hideSuggestions();
+
+  document.getElementById("dashboard").classList.add("hidden");
+  document.getElementById("tabsContainer").classList.add("hidden");
+  document.getElementById("financialsContainer").classList.add("hidden");
+
+  const btn = document.getElementById("searchBtn");
+  btn.disabled = true;
+  btn.textContent = "计算中...";
+
+  try {
+    const summary = await apiGet("valuation/summary", { code });
+    currentData = summary;
+
+    if (summary.error) {
+      showError("估值失败: " + summary.error);
+      return;
+    }
+
+    renderDashboard(summary);
+    switchTab("dcf");
+    loadFinancials(code);
+  } catch (e) {
+    showError(e.message || "请求失败");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "查询估值";
+  }
+}
+
+function showError(msg) {
+  document.getElementById("dashboard").innerHTML = `
+    <div class="card" style="grid-column:1/-1; border:2px solid #ffcdd2; background:#fff5f5;">
+      <div class="card-label" style="color:#c62828;">⚠️ 错误</div>
+      <div class="card-sub" style="color:#c62828;">${escapeHtml(msg)}</div>
+      ${msg.includes('无法连接') ? `
+        <div style="margin-top:12px;padding:12px;background:#f5f5f5;border-radius:8px;text-align:left;font-size:13px;color:#666;">
+          <strong>启动步骤：</strong><br>
+          1. 打开终端<br>
+          2. 执行: <code style="background:#e8e8e8;padding:2px 6px;border-radius:4px;">cd ~/Desktop/codes/stock-valuation/backend && python3 main.py</code><br>
+          3. 看到 "🚀 A股估值工具已启动" 后刷新此页面
+        </div>
+      ` : ''}
+    </div>
+  `;
+  document.getElementById("dashboard").classList.remove("hidden");
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ==================== 仪表盘 ====================
+function renderDashboard(data) {
+  const price = data.current_price || 0;
+  const value = data.composite_value || 0;
+  const margin = data.margin_of_safety || 0;
+  const rating = data.rating || "未知";
+
+  const marginClass = margin > 10 ? "green" : margin > -10 ? "orange" : "red";
+  const ratingClass = getRatingClass(rating);
+
+  document.getElementById("dashboard").innerHTML = `
+    <div class="card">
+      <div class="card-label">当前股价</div>
+      <div class="card-value">¥${price.toFixed(2)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">综合内在价值</div>
+      <div class="card-value">¥${value.toFixed(2)}</div>
+      <div class="card-sub">加权聚合四种模型</div>
+    </div>
+    <div class="card ${marginClass}">
+      <div class="card-label">安全边际</div>
+      <div class="card-value">${margin >= 0 ? "+" : ""}${margin.toFixed(1)}%</div>
+      <div class="card-sub"><span class="rating-badge ${ratingClass}">${rating}</span></div>
+    </div>
+  `;
+  document.getElementById("dashboard").classList.remove("hidden");
+  document.getElementById("tabsContainer").classList.remove("hidden");
+}
+
+// ==================== Tab 切换 ====================
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll(".tab").forEach((t, i) => {
+    t.classList.toggle("active", ["dcf","pepb","graham","pegroe"][i] === tab);
+  });
+
+  switch (tab) {
+    case "dcf": renderDCF(); break;
+    case "pepb": renderPEPB(); break;
+    case "graham": renderGraham(); break;
+    case "pegroe": renderPEGROE(); break;
+  }
+}
+
+// ==================== DCF 面板 ====================
+function renderDCF() {
+  const model = currentData?.models?.dcf;
+  if (!model || model.error) {
+    document.getElementById("tabContent").innerHTML = `<div class="error-box">${model?.error || "无数据"}</div>`;
+    return;
+  }
+
+  const cf = model.cash_flows || {};
+  const params = model.params || {};
+  const projected = cf.projected || [];
+
+  let fcfRows = projected.map(p => `
+    <tr><td>第${p.year}年</td><td>¥${(p.fcf/1e8).toFixed(2)}亿</td><td>¥${(p.pv/1e8).toFixed(2)}亿</td></tr>
+  `).join("");
+
+  document.getElementById("tabContent").innerHTML = `
+    <div class="model-grid">
+      <div class="model-section">
+        <h3>📐 模型参数</h3>
+        <div class="param-row"><span class="param-label">预测年限</span><span class="param-value">${params.projection_years} 年</span></div>
+        <div class="param-row"><span class="param-label">FCF 增长率</span><span class="param-value">${params.fcf_growth_rate}%</span></div>
+        <div class="param-row"><span class="param-label">历史平均增长率</span><span class="param-value">${params.historical_growth}%</span></div>
+        <div class="param-row"><span class="param-label">永续增长率</span><span class="param-value">${params.perpetual_growth_rate}%</span></div>
+        <div class="param-row"><span class="param-label">折现率 WACC</span><span class="param-value">${params.wacc}%</span></div>
+
+        <h3 style="margin-top:20px;">📊 历史自由现金流</h3>
+        ${(cf.historical_fcf || []).map((v, i) =>
+          `<div class="param-row"><span class="param-label">第 ${i+1} 期</span><span class="param-value">¥${(v/1e8).toFixed(2)}亿</span></div>`
+        ).join("")}
+        <div class="param-row"><span class="param-label">最新 FCF</span><span class="param-value">¥${(cf.latest_fcf/1e8).toFixed(2)}亿</span></div>
+      </div>
+
+      <div class="model-section">
+        <h3>🔮 未来现金流预测</h3>
+        <table class="fcf-table">
+          <tr><th>年份</th><th>预测FCF</th><th>折现现值</th></tr>
+          ${fcfRows}
+        </table>
+
+        <div class="result-box" style="margin-top:16px;">
+          <div class="param-row"><span class="param-label">终值</span><span class="param-value">¥${(cf.terminal_value/1e8).toFixed(2)}亿</span></div>
+          <div class="param-row"><span class="param-label">终值现值</span><span class="param-value">¥${(cf.pv_terminal/1e8).toFixed(2)}亿</span></div>
+          <div class="param-row"><span class="param-label">企业价值</span><span class="param-value">¥${(cf.enterprise_value/1e8).toFixed(2)}亿</span></div>
+          <div class="param-row"><span class="param-label">现金 - 负债</span><span class="param-value">¥${((cf.cash - cf.debt)/1e8).toFixed(2)}亿</span></div>
+          <div class="param-row" style="font-size:16px;font-weight:700;"><span class="param-label">每股内在价值</span><span class="param-value">¥${model.intrinsic_value}</span></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ==================== PE/PB 面板 ====================
+function renderPEPB() {
+  const model = currentData?.models?.pe_pb;
+  if (!model || model.error) {
+    document.getElementById("tabContent").innerHTML = `<div class="error-box">${model?.error || "无数据"}</div>`;
+    return;
+  }
+
+  const pe = model.pe_analysis || {};
+  const pb = model.pb_analysis || {};
+
+  document.getElementById("tabContent").innerHTML = `
+    <div class="model-grid">
+      <div class="model-section">
+        <h3>📈 PE 分析</h3>
+        <div class="param-row"><span class="param-label">当前 PE-TTM</span><span class="param-value">${pe.current_pe || "-"}</span></div>
+        <div class="param-row"><span class="param-label">合理 PE</span><span class="param-value">${pe.fair_pe || "-"}</span></div>
+        <div class="param-row"><span class="param-label">PE 偏离度</span><span class="param-value">${(pe.pe_position ?? 0) >= 0 ? "+" : ""}${pe.pe_position ?? "-"}%</span></div>
+        <div class="param-row"><span class="param-label">EPS (TTM)</span><span class="param-value">¥${pe.eps || "-"}</span></div>
+        <div class="param-row"><span class="param-label">净利润增长率</span><span class="param-value">${pe.profit_growth_pct || "-"}%</span></div>
+        <div class="param-row" style="font-weight:700;font-size:15px;">
+          <span class="param-label">PE法估值</span><span class="param-value">¥${pe.pe_valuation || "-"}</span></div>
+        <div style="margin-top:8px;color:#888;font-size:13px;">${pe.pe_label || ""}</div>
+      </div>
+
+      <div class="model-section">
+        <h3>📉 PB 分析</h3>
+        <div class="param-row"><span class="param-label">当前 PB</span><span class="param-value">${pb.current_pb || "-"}</span></div>
+        <div class="param-row"><span class="param-label">合理 PB</span><span class="param-value">${pb.fair_pb || "-"}</span></div>
+        <div class="param-row"><span class="param-label">PB 偏离度</span><span class="param-value">${(pb.pb_position ?? 0) >= 0 ? "+" : ""}${pb.pb_position ?? "-"}%</span></div>
+        <div class="param-row"><span class="param-label">ROE</span><span class="param-value">${pb.roe_pct || "-"}%</span></div>
+        <div class="param-row"><span class="param-label">每股净资产 BPS</span><span class="param-value">¥${pb.bps || "-"}</span></div>
+        <div class="param-row" style="font-weight:700;font-size:15px;">
+          <span class="param-label">PB法估值</span><span class="param-value">¥${pb.pb_valuation || "-"}</span></div>
+        <div style="margin-top:8px;color:#888;font-size:13px;">${pb.pb_label || ""}</div>
+      </div>
+    </div>
+    <div class="result-box" style="margin-top:16px;">
+      <div style="text-align:center;">
+        <div class="label">加权综合估值 (PE × ${model.params?.pe_weight || 0.6} + PB × ${model.params?.pb_weight || 0.4})</div>
+        <div class="big-number">¥${model.intrinsic_value}</div>
+        <div style="margin-top:4px;">安全边际: ${model.margin_of_safety}% · <span class="rating-badge ${getRatingClass(model.rating)}">${model.rating}</span></div>
+        ${model.growth_valuation ? `<div style="margin-top:8px;color:#888;">PEG=1 增长估值: ¥${model.growth_valuation}</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+// ==================== Graham 面板 ====================
+function renderGraham() {
+  const model = currentData?.models?.graham;
+  if (!model || model.error) {
+    document.getElementById("tabContent").innerHTML = `<div class="error-box">${model?.error || "无数据"}</div>`;
+    return;
+  }
+
+  const d = model.details || {};
+  const p = model.params || {};
+
+  document.getElementById("tabContent").innerHTML = `
+    <div class="model-grid">
+      <div class="model-section">
+        <h3>📐 公式与参数</h3>
+        <div style="padding:12px;background:#fafafa;border-radius:8px;margin-bottom:12px;text-align:center;font-size:15px;">
+          Graham Number = √(<span style="color:#4a6cf7;">${p.factor}</span> × EPS × BVPS)
+        </div>
+        <div class="param-row"><span class="param-label">最大 PE</span><span class="param-value">${p.max_pe}x</span></div>
+        <div class="param-row"><span class="param-label">最大 PB</span><span class="param-value">${p.max_pb}x</span></div>
+        <div class="param-row"><span class="param-label">乘积系数</span><span class="param-value">${p.factor}</span></div>
+        <div class="param-row"><span class="param-label">EPS (TTM)</span><span class="param-value">¥${d.eps}</span></div>
+        <div class="param-row"><span class="param-label">BVPS</span><span class="param-value">¥${d.bps}</span></div>
+      </div>
+
+      <div class="model-section">
+        <h3>📊 估值结果</h3>
+        <div class="result-box" style="text-align:center;">
+          <div class="label">Graham Number</div>
+          <div class="big-number">¥${d.graham_number}</div>
+          <div style="margin-top:4px;">安全边际价格 (2/3): ¥${d.safety_margin_price}</div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div class="param-row"><span class="param-label">当前股价</span><span class="param-value">¥${model.current_price}</span></div>
+          <div class="param-row"><span class="param-label">安全边际</span><span class="param-value">${model.margin_of_safety}%</span></div>
+          <div class="param-row"><span class="param-label">评级</span><span class="param-value"><span class="rating-badge ${getRatingClass(model.rating)}">${model.rating}</span></span></div>
+        </div>
+
+        <h3 style="margin-top:16px;">🔄 变体</h3>
+        <div class="param-row"><span class="param-label">激进版 (PE≤20)</span><span class="param-value">¥${d.aggressive}</span></div>
+        <div class="param-row"><span class="param-label">保守版 (PE≤12)</span><span class="param-value">¥${d.conservative}</span></div>
+      </div>
+    </div>
+  `;
+}
+
+// ==================== PEG/ROE 面板 ====================
+function renderPEGROE() {
+  const model = currentData?.models?.peg_roe;
+  if (!model || model.error) {
+    document.getElementById("tabContent").innerHTML = `<div class="error-box">${model?.error || "无数据"}</div>`;
+    return;
+  }
+
+  const peg = model.peg_analysis || {};
+  const roe = model.roe_analysis || {};
+
+  document.getElementById("tabContent").innerHTML = `
+    <div class="model-grid">
+      <div class="model-section">
+        <h3>📈 PEG 分析</h3>
+        ${peg.peg !== null ? `
+          <div class="result-box" style="text-align:center;margin-bottom:12px;">
+            <div class="label">PEG = PE / 增长率</div>
+            <div class="big-number">${peg.peg}</div>
+            <div>${peg.peg_label}</div>
+          </div>
+          <div class="param-row"><span class="param-label">当前 PE</span><span class="param-value">${peg.pe}</span></div>
+          <div class="param-row"><span class="param-label">净利润增长率</span><span class="param-value">${peg.profit_growth_pct}%</span></div>
+          ${peg.is_undervalued ? '<div style="text-align:center;color:#2e7d32;margin-top:8px;">✅ PEG < 1，可能被低估</div>' : ''}
+        ` : `<div class="error-box">${peg.peg_label}</div>`}
+      </div>
+
+      <div class="model-section">
+        <h3>💰 ROE 估值</h3>
+        <div class="param-row"><span class="param-label">ROE</span><span class="param-value">${roe.roe}%</span></div>
+        <div class="param-row"><span class="param-label">合理 PB</span><span class="param-value">${roe.fair_pb}x</span></div>
+        <div class="param-row"><span class="param-label">BPS</span><span class="param-value">¥${roe.bps}</span></div>
+        <div class="param-row" style="font-weight:700;font-size:15px;">
+          <span class="param-label">ROE 估值</span><span class="param-value">¥${roe.roe_valuation}</span></div>
+      </div>
+    </div>
+    <div class="result-box" style="margin-top:16px;text-align:center;">
+      <div class="label">综合得分</div>
+      <div class="big-number">${model.composite_score}/100</div>
+      <div>综合估值: ¥${model.intrinsic_value} · 安全边际: ${model.margin_of_safety}%</div>
+      <div style="margin-top:4px;"><span class="rating-badge ${getRatingClass(model.rating)}">${model.rating}</span></div>
+    </div>
+  `;
+}
+
+// ==================== 财务数据 ====================
+async function loadFinancials(code) {
+  const data = await apiGet("stock/financials", { code });
+  if (!data || !data.info) return;
+
+  const info = data.info || {};
+  const ind = data.indicators || {};
+
+  document.getElementById("financialsContainer").innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+      <h3 style="margin-bottom:12px;">📋 ${info.name || code} · 关键财务指标</h3>
+      <div class="indicator-grid">
+        <div class="indicator-item"><div class="ind-val">¥${ind.eps || "-"}</div><div class="ind-label">EPS</div></div>
+        <div class="indicator-item"><div class="ind-val">¥${ind.bps || "-"}</div><div class="ind-label">每股净资产</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.roe || "-"}%</div><div class="ind-label">ROE</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.roa || "-"}%</div><div class="ind-label">ROA</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.gross_margin || "-"}%</div><div class="ind-label">毛利率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.net_margin || "-"}%</div><div class="ind-label">净利率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.debt_ratio || "-"}%</div><div class="ind-label">资产负债率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.current_ratio || "-"}%</div><div class="ind-label">流动比率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.revenue_growth || "-"}%</div><div class="ind-label">营收增长率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.profit_growth || "-"}%</div><div class="ind-label">净利润增长率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.quick_ratio || "-"}%</div><div class="ind-label">速动比率</div></div>
+        <div class="indicator-item"><div class="ind-val">${ind.total_asset_growth || "-"}%</div><div class="ind-label">总资产增长率</div></div>
+      </div>
+    </div>
+  `;
+  document.getElementById("financialsContainer").classList.remove("hidden");
+}
+
+// ==================== 工具函数 ====================
+function getRatingClass(rating) {
+  const map = {
+    "强低估": "rating-strong-undervalued",
+    "低估": "rating-undervalued",
+    "合理": "rating-fair",
+    "高估": "rating-overvalued",
+    "强高估": "rating-strong-overvalued",
+    "具备安全边际": "rating-strong-undervalued",
+    "高于 Graham Number": "rating-overvalued",
+  };
+  for (const [k, v] of Object.entries(map)) {
+    if (rating && rating.includes(k)) return v;
+  }
+  return "rating-fair";
+}
+
+// 回车搜索
+document.getElementById("searchInput").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") { doSearch(); }
+});
+
+// 点击外部隐藏建议
+document.addEventListener("click", function(e) {
+  if (!e.target.closest(".search-box")) hideSuggestions();
+});
+</script>
+</body>
+</html>
